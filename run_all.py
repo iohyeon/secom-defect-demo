@@ -96,21 +96,23 @@ clean_rows = cv_scores(X, y, lambda a, b, c: clone(pipe_sel).fit(a, b).predict_p
 checks["C3_leakage"] = {"leaky_cv": summarize(leak_rows), "pipeline_cv": summarize(clean_rows)}
 print("C3", checks["C3_leakage"])
 
-# 후보 모델 비교 (파이프라인, 랜덤 층화 CV, AP 기준). 테스트 셋은 보지 않는다.
-cands = {"rf_balanced": rf(balanced=True), "l1_logreg": l1_logreg()}
-cand_cv = {}
-for name, mdl in cands.items():
-    rows = cv_scores(X, y, lambda a, b, c, m=mdl: clone(make_pipeline(m)).fit(a, b).predict_proba(c)[:, 1])
-    cand_cv[name] = summarize(rows)
-best = max(cand_cv, key=lambda k: cand_cv[k]["pr_auc"]["mean"])
-checks["model_choice"] = {"cv": cand_cv, "chosen": best}
-print("model choice", checks["model_choice"])
-final = make_pipeline(cands[best])
-
-# C4 분할 현실성: 시간순 60/20/20 (학습/검증/테스트) vs 같은 비율의 랜덤 층화 분할 20회.
+# 시간순 60/20/20 (학습/검증/테스트). 모델 선택과 임계값 선택에 테스트 구간을 쓰지 않도록 먼저 나눈다.
 order = np.argsort(t.to_numpy(), kind="stable")
 n = len(y)
 i_tr, i_va, i_te = order[: int(.6 * n)], order[int(.6 * n): int(.8 * n)], order[int(.8 * n):]
+
+# 후보 모델 비교: 시간순 학습 구간(앞 60%) 안에서만 층화 CV, AP 기준. 검증과 테스트 구간은 보지 않는다.
+cands = {"rf_balanced": rf(balanced=True), "l1_logreg": l1_logreg()}
+cand_cv = {}
+for name, mdl in cands.items():
+    rows = cv_scores(X[i_tr], y[i_tr], lambda a, b, c, m=mdl: clone(make_pipeline(m)).fit(a, b).predict_proba(c)[:, 1])
+    cand_cv[name] = summarize(rows)
+best = max(cand_cv, key=lambda k: cand_cv[k]["pr_auc"]["mean"])
+checks["model_choice"] = {"cv": cand_cv, "chosen": best, "data": "time_train_60pct"}
+print("model choice", checks["model_choice"])
+final = make_pipeline(cands[best])
+
+# C4 분할 현실성: 위 시간순 분할 vs 같은 비율의 랜덤 층화 분할 20회.
 tm = clone(final).fit(X[i_tr], y[i_tr])
 s_va, s_te = tm.predict_proba(X[i_va])[:, 1], tm.predict_proba(X[i_te])[:, 1]
 time_test = metrics(y[i_te], s_te)
